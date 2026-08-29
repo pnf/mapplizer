@@ -17,15 +17,23 @@ entire guide:
 
 ```
 field 1 (string)            guide name
-field 2 (repeated message)  one per place
+field 2 (repeated message)  one per entry, in one of two shapes
+
+  a point of interest:
   |- field 1 (varint)       resultProviderId
   +- field 2 (varint)       muid
+
+  a dropped pin:
+  |- field 3 (string)       reverse-geocoded address
+  +- field 4 (message)      |- field 1 (double) latitude
+                            +- field 2 (double) longitude
 ```
 
 So membership costs one redirect — no HTML parsing, no headless browser, no
-JavaScript. Each place is then hydrated through `POST /data/place`, the same
-private endpoint maps.apple.com's own bundle calls, which returns names,
-coordinates, addresses, categories, phone numbers, ratings, hours and photos.
+JavaScript. Points of interest are then hydrated through `POST /data/place`,
+the same private endpoint maps.apple.com's own bundle calls, which returns
+names, coordinates, addresses, categories, phone numbers, ratings, hours and
+photos. Dropped pins need no lookup at all — the URL already has everything.
 
 The pipeline is five stages, each independently testable:
 
@@ -40,6 +48,14 @@ The pipeline is five stages, each independently testable:
 `normalize.py` is the only module that knows Apple's schema; everything
 downstream speaks `mapplizer.model`.
 
+## Two kinds of entry
+
+A guide can contain **points of interest** (a business, with a muid) and
+**dropped pins** (a user-placed marker at a coordinate, with no business behind
+it). They are encoded differently and only the first kind needs a lookup.
+`GuideRef.entries` keeps them in guide order; `.places` and `.pins` select
+each kind.
+
 ## Why the completeness check matters
 
 The guide page server-renders only the **first 20** places and lazy-loads the
@@ -49,7 +65,18 @@ the URL and **fails loudly** on a mismatch:
 
 ```console
 $ mapplizer https://maps.apple/ug/...
-error: resolved 54 of 57 places (3 missing). Re-run with --allow-partial to export anyway.
+error: exported 54 of 57 entries; 3 missing -- 3 failed to resolve (...).
+Re-run with --allow-partial to export anyway.
+```
+
+**Dead references** are reported separately from failures. A guide can outlive
+the places in it: if Apple returns HTTP 200 but simply omits a muid, that place
+no longer exists in Apple's data and no retry will bring it back.
+maps.apple.com silently drops these from its own rendering; `mapplizer` names
+them instead, and `--allow-partial` exports the rest.
+
+```console
+error: exported 11 of 12 entries; 1 missing -- 1 no longer listed by Apple (13567334765449204772).
 ```
 
 ## Usage
@@ -82,6 +109,9 @@ Each place becomes a `<Placemark>` with a `<Point>`. The readable card goes in
   need a second resolver.
 - muids are uint64 and exceed JavaScript's safe integer range. They are strings
   everywhere in this codebase; keep them that way.
+- A guide's declared entry count is the only reliable total. The rendered page
+  agrees with it only after lazy-loading finishes, and it silently omits dead
+  references.
 
 ## Development
 
@@ -91,3 +121,7 @@ $ pytest
 ```
 
 Tests run entirely offline against saved fixtures in `tests/fixtures/`.
+
+Verified end to end against five real guides — 100 placemarks total, including
+a dropped pin and a dead reference, with accented names, typographic
+apostrophes and ampersands round-tripping intact.

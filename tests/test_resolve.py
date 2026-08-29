@@ -45,3 +45,39 @@ def test_bad_base64_is_reported():
 def test_valid_base64_that_is_not_a_guide():
     with pytest.raises(ResolveError):
         parse_guide_ref("aGVsbG8gd29ybGQ=")  # "hello world"
+
+
+def test_dropped_pin_is_decoded_from_the_url():
+    """A dropped pin carries its own address and coordinates -- no lookup needed."""
+    import base64
+    import struct
+
+    from mapplizer.model import PinRef
+
+    address = "1353 Rue Rachel E, Montréal QC H2J 2K2, Canada".encode()
+    coords = (
+        b"\x09" + struct.pack("<d", 45.527950723010434)
+        + b"\x11" + struct.pack("<d", -73.57202999341762)
+    )
+    entry = (
+        b"\x1a" + bytes([len(address)]) + address
+        + b"\x22" + bytes([len(coords)]) + coords
+    )
+    message = b"\x0a\x03Pin" + b"\x12" + bytes([len(entry)]) + entry
+
+    guide = parse_guide_ref(base64.b64encode(message).decode())
+    assert guide.name == "Pin"
+    assert guide.pins == (
+        PinRef(
+            address="1353 Rue Rachel E, Montréal QC H2J 2K2, Canada",
+            lat=45.527950723010434,
+            lng=-73.57202999341762,
+        ),
+    )
+    assert guide.places == ()
+
+
+def test_entries_preserve_mixed_order(guide_ref_b64):
+    guide = parse_guide_ref(guide_ref_b64)
+    assert len(guide.entries) == len(guide.places) + len(guide.pins)
+    assert guide.entries[0] in guide.places

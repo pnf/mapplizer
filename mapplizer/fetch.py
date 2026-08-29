@@ -15,6 +15,7 @@ import json
 import logging
 import pathlib
 import time
+from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
 import requests
@@ -37,6 +38,17 @@ DEFAULT_CHUNK_SIZE = 10
 
 class FetchError(Exception):
     """A place lookup failed."""
+
+
+@dataclass
+class FetchResult:
+    """Records that came back, plus the muids the server had nothing for."""
+
+    records: dict[str, dict] = field(default_factory=dict)
+    # A 200 that simply omits a muid means Apple has no such place any more --
+    # a dead reference, not a transient failure. maps.apple.com drops these
+    # from its own rendering of the guide.
+    unresolved: set[str] = field(default_factory=set)
 
 
 def make_session(language: str = "en-US") -> requests.Session:
@@ -128,9 +140,10 @@ class PlaceClient:
             f"{self.max_retries} attempts: {last_error}"
         ) from last_error
 
-    def fetch(self, refs: Sequence[PlaceRef]) -> dict[str, dict]:
-        """Fetch records for ``refs``. Returns ``{muid: {annotation, place}}``."""
-        records: dict[str, dict] = {}
+    def fetch(self, refs: Sequence[PlaceRef]) -> FetchResult:
+        """Fetch records for ``refs``."""
+        result = FetchResult()
+        records = result.records
         pending: list[PlaceRef] = []
 
         for ref in refs:
@@ -157,7 +170,11 @@ class PlaceClient:
                 annotation = annotations.get(ref.muid)
                 place = places.get(ref.muid)
                 if annotation is None and place is None:
-                    log.warning("no data returned for muid %s", ref.muid)
+                    log.warning(
+                        "no data for muid %s -- Apple no longer lists this place",
+                        ref.muid,
+                    )
+                    result.unresolved.add(ref.muid)
                     continue
                 record = {"annotation": annotation, "place": place}
                 records[ref.muid] = record
@@ -166,4 +183,4 @@ class PlaceClient:
                 "fetched %d/%d places", min(len(records), len(refs)), len(refs)
             )
 
-        return records
+        return result

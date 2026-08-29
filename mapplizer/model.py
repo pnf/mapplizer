@@ -19,11 +19,36 @@ class PlaceRef:
 
 
 @dataclass(frozen=True)
+class PinRef:
+    """A dropped pin: a user-placed marker with no business behind it.
+
+    Unlike a POI these are self-describing -- the share URL carries the
+    coordinates and reverse-geocoded address directly, so no lookup is needed.
+    """
+
+    address: str
+    lat: float
+    lng: float
+
+
+GuideEntry = PlaceRef | PinRef
+
+
+@dataclass(frozen=True)
 class GuideRef:
     """A guide's name and membership, decoded from a share URL."""
 
     name: str
-    places: tuple[PlaceRef, ...]
+    entries: tuple[GuideEntry, ...]
+
+    @property
+    def places(self) -> tuple[PlaceRef, ...]:
+        """Just the entries needing a place lookup."""
+        return tuple(e for e in self.entries if isinstance(e, PlaceRef))
+
+    @property
+    def pins(self) -> tuple[PinRef, ...]:
+        return tuple(e for e in self.entries if isinstance(e, PinRef))
 
 
 @dataclass

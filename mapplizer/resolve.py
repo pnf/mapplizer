@@ -5,26 +5,39 @@ A short link such as ``https://maps.apple/ug/yDaPfLzD_27SbtQL_DSGUA`` is a
 holds the whole guide::
 
     field 1 (string)            guide name
-    field 2 (repeated message)  one per place
+    field 2 (repeated message)  one per entry, in one of two shapes
+
+    A point of interest:
       +- field 1 (varint)       resultProviderId
       +- field 2 (varint)       muid
 
-So the guide's membership costs exactly one redirect -- no HTML, no JavaScript.
+    A dropped pin -- a user-placed marker with no business behind it:
+      +- field 3 (string)       reverse-geocoded address
+      +- field 4 (message)      +- field 1 (double) latitude
+                                +- field 2 (double) longitude
+
+So the guide's membership costs exactly one redirect -- no HTML, no JavaScript,
+and dropped pins need no lookup at all.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import struct
 import urllib.parse
 
-from .model import GuideRef, PlaceRef
+from .model import GuideRef, PinRef, PlaceRef
 from .protobuf import ProtobufError, field_map
 
 GUIDE_NAME_FIELD = 1
 GUIDE_PLACE_FIELD = 2
 PLACE_PROVIDER_FIELD = 1
 PLACE_MUID_FIELD = 2
+PIN_ADDRESS_FIELD = 3
+PIN_COORDINATES_FIELD = 4
+PIN_LAT_FIELD = 1
+PIN_LNG_FIELD = 2
 
 
 class ResolveError(Exception):
@@ -80,28 +93,62 @@ def parse_guide_ref(payload: str) -> GuideRef:
     names = fields.get(GUIDE_NAME_FIELD, [])
     name = names[0].decode("utf-8", "replace") if names else "Apple Maps Guide"
 
-    places: list[PlaceRef] = []
-    for entry in fields.get(GUIDE_PLACE_FIELD, []):
-        if not isinstance(entry, bytes):
+    entries = []
+    for raw_entry in fields.get(GUIDE_PLACE_FIELD, []):
+        if not isinstance(raw_entry, bytes):
             continue
         try:
-            sub = field_map(entry)
+            sub = field_map(raw_entry)
         except ProtobufError:
             continue
-        muid = sub.get(PLACE_MUID_FIELD, [None])[0]
-        provider = sub.get(PLACE_PROVIDER_FIELD, [None])[0]
-        if muid is None:
-            continue
-        places.append(
-            # muids are uint64 and exceed JS's safe integer range; Apple's own
-            # payloads carry them as strings, so we do the same throughout.
-            PlaceRef(muid=str(muid), result_provider_id=int(provider or 0))
-        )
 
-    if not places:
+        muid = sub.get(PLACE_MUID_FIELD, [None])[0]
+        if muid is not None:
+            provider = sub.get(PLACE_PROVIDER_FIELD, [None])[0]
+            entries.append(
+                # muids are uint64 and exceed JS's safe integer range; Apple's
+                # own payloads carry them as strings, so we do the same.
+                PlaceRef(muid=str(muid), result_provider_id=int(provider or 0))
+            )
+            continue
+
+        pin = _parse_pin(sub)
+        if pin is not None:
+            entries.append(pin)
+
+    if not entries:
         raise ResolveError("guide payload decoded but contained no places")
 
-    return GuideRef(name=name, places=tuple(places))
+    return GuideRef(name=name, entries=tuple(entries))
+
+
+def _read_double(value) -> float | None:
+    """Protobuf fixed64 fields arrive as ints; reinterpret the bits as a double."""
+    if not isinstance(value, int):
+        return None
+    try:
+        return struct.unpack("<d", value.to_bytes(8, "little"))[0]
+    except (OverflowError, struct.error):
+        return None
+
+
+def _parse_pin(sub: dict[int, list]) -> PinRef | None:
+    coordinates = sub.get(PIN_COORDINATES_FIELD, [None])[0]
+    if not isinstance(coordinates, bytes):
+        return None
+    try:
+        point = field_map(coordinates)
+    except ProtobufError:
+        return None
+
+    lat = _read_double(point.get(PIN_LAT_FIELD, [None])[0])
+    lng = _read_double(point.get(PIN_LNG_FIELD, [None])[0])
+    if lat is None or lng is None:
+        return None
+
+    address = sub.get(PIN_ADDRESS_FIELD, [b""])[0]
+    address = address.decode("utf-8", "replace") if isinstance(address, bytes) else ""
+    return PinRef(address=address, lat=lat, lng=lng)
 
 
 def resolve(url: str, session) -> tuple[GuideRef, str]:
