@@ -155,7 +155,14 @@ def normalize(ref: PlaceRef, record: dict, language: str = "en-US") -> Place | N
         lng=lng,
         place_id=((raw.get("mapsId") or {}).get("shardedId") or {}).get("placeId"),
         address_lines=address_lines,
+        street=structured.get("fullThoroughfare")
+        or " ".join(
+            p for p in (structured.get("subThoroughfare"), structured.get("thoroughfare")) if p
+        )
+        or None,
+        sub_locality=structured.get("subLocality"),
         locality=structured.get("locality"),
+        sub_administrative_area=structured.get("subAdministrativeArea"),
         administrative_area=structured.get("administrativeArea"),
         postcode=structured.get("postCode"),
         country=structured.get("country"),

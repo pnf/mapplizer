@@ -77,3 +77,23 @@ def test_hours_with_no_ranges_reads_closed():
     assert _format_hours({"weeklyHours": [{"day": ["SUNDAY"], "timeRange": []}]}) == [
         "Sun Closed"
     ]
+
+
+def test_postal_address_is_cnpostaladdress_shaped(place_full):
+    """The .rego format wants CNPostalAddress fields; Apple supplies them all."""
+    place = normalize(REF, place_full)
+    assert place.postal_address == {
+        "street": "5456 Rue Sherbrooke O",
+        "subLocality": "Upper-Lachine",
+        "city": "Montréal",
+        "subAdministrativeArea": "Urban Agglomeration of Montreal",
+        "state": "Quebec",
+        "postalCode": "H4A 1V9",
+        "country": "Canada",
+        "ISOCountryCode": "CA",
+    }
+
+
+def test_postal_address_omits_missing_components():
+    record = {"annotation": {"title": "X", "center": [1.0, 2.0]}, "place": {}}
+    assert normalize(REF, record).postal_address == {}

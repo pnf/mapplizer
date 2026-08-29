@@ -73,7 +73,13 @@ class Place:
     place_id: str | None = None
     category: str | None = None
     address_lines: list[str] = field(default_factory=list)
+    # Structured address, named to line up with CNPostalAddress: street,
+    # subLocality, city, subAdministrativeArea, state, postalCode, country,
+    # ISOCountryCode. Apple supplies every one of these.
+    street: str | None = None
+    sub_locality: str | None = None
     locality: str | None = None
+    sub_administrative_area: str | None = None
     administrative_area: str | None = None
     postcode: str | None = None
     country: str | None = None
@@ -91,6 +97,21 @@ class Place:
     @property
     def address(self) -> str:
         return ", ".join(self.address_lines)
+
+    @property
+    def postal_address(self) -> dict[str, str]:
+        """The structured address, keyed as CNPostalAddress names its fields."""
+        fields = {
+            "street": self.street,
+            "subLocality": self.sub_locality,
+            "city": self.locality,
+            "subAdministrativeArea": self.sub_administrative_area,
+            "state": self.administrative_area,
+            "postalCode": self.postcode,
+            "country": self.country,
+            "ISOCountryCode": self.country_code,
+        }
+        return {k: v for k, v in fields.items() if v}
 
     @property
     def maps_url(self) -> str:
