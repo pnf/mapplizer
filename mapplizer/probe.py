@@ -28,6 +28,8 @@ SAMPLE_PHOTO = (
 )
 
 EMBEDDED_NAME = f"{PHOTO_DIR}/probe-embedded.jpg"
+EMBEDDED_2 = f"{PHOTO_DIR}/probe-embedded-2.jpg"
+ROOT_NAME = "probe-root.jpg"
 
 
 def _placemark(
@@ -63,6 +65,87 @@ def _placemark(
 
 ADDRESS = "143 Mont-Royal Est, Montreal QC H2T 1N9, Canada"
 PHONE = "+14383834700"
+
+
+def render_photo_probe_kml() -> str:
+    """Round two: how the <img> channel behaves, now that it is the known one.
+
+    Round one established that Rego takes photos only from an ``<img>`` tag
+    whose ``src`` is a KMZ-relative path, and shows ``<description>`` as plain
+    text. These pins pin down the details that follow from that: whether text
+    and images coexist, whether several images come through, and whether any
+    attribute becomes the photo caption Rego supports.
+    """
+    parts = [
+        _placemark(
+            1,
+            "text then image",
+            description=f'Notes above the picture.\n<img src="{EMBEDDED_NAME}"/>',
+        ),
+        _placemark(
+            2,
+            "image then text",
+            description=f'<img src="{EMBEDDED_NAME}"/>\nNotes below the picture.',
+        ),
+        _placemark(
+            3,
+            "two images",
+            description=f'<img src="{EMBEDDED_NAME}"/>\n<img src="{EMBEDDED_2}"/>',
+        ),
+        _placemark(
+            4,
+            "two images plus text",
+            description=(
+                f'Notes with two pictures.\n<img src="{EMBEDDED_NAME}"/>\n'
+                f'<img src="{EMBEDDED_2}"/>'
+            ),
+        ),
+        _placemark(
+            5,
+            "image alt attribute",
+            description=f'<img src="{EMBEDDED_NAME}" alt="ALT CAPTION"/>',
+        ),
+        _placemark(
+            6,
+            "image title attribute",
+            description=f'<img src="{EMBEDDED_NAME}" title="TITLE CAPTION"/>',
+        ),
+        _placemark(
+            7,
+            "image src at archive root",
+            description=f'<img src="{ROOT_NAME}"/>',
+        ),
+        _placemark(
+            8,
+            "image src with dot slash",
+            description=f'<img src="./{EMBEDDED_NAME}"/>',
+        ),
+        _placemark(
+            9,
+            "image tag unclosed",
+            description=f'<img src="{EMBEDDED_NAME}">',
+        ),
+        _placemark(
+            10,
+            "same image twice",
+            description=f'<img src="{EMBEDDED_NAME}"/>\n<img src="{EMBEDDED_NAME}"/>',
+        ),
+    ]
+    out = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    out += f'<kml xmlns="{KML_NS}">\n  <Document>\n'
+    out += "    <name>mapplizer photo probe</name>\n"
+    out += (
+        "    <description>"
+        + _cdata(
+            "Round two. Each pin varies one detail of the <img> photo channel. "
+            "Note for each pin: how many photos arrived, whether the notes text "
+            "survived, and whether any photo carries a caption."
+        )
+        + "</description>\n"
+    )
+    out += "".join(parts)
+    out += "  </Document>\n</kml>\n"
+    return out
 
 
 def render_probe_kml() -> str:
@@ -143,9 +226,15 @@ def render_probe_kml() -> str:
     return out
 
 
-def write_probe(path: pathlib.Path, session=None) -> pathlib.Path:
-    """Write the probe archive, embedding a real image for the KMZ-path probes."""
-    kml_text = render_probe_kml()
+def write_probe(
+    path: pathlib.Path, session=None, probe_set: str = "conventions"
+) -> pathlib.Path:
+    """Write a probe archive, embedding real images for the KMZ-path probes."""
+    kml_text = (
+        render_photo_probe_kml()
+        if probe_set == "photos"
+        else render_probe_kml()
+    )
     photo: bytes | None = None
     if session is not None:
         try:
@@ -163,7 +252,11 @@ def write_probe(path: pathlib.Path, session=None) -> pathlib.Path:
         archive.writestr("doc.kml", kml_text)
         if photo:
             archive.writestr(EMBEDDED_NAME, photo)
+            archive.writestr(EMBEDDED_2, photo)
+            archive.writestr(ROOT_NAME, photo)
         else:
-            log.warning("probe written without an embedded photo; probes 5 and 8 "
-                        "cannot succeed")
+            log.warning(
+                "probe written without an embedded photo; the KMZ-path probes "
+                "cannot succeed"
+            )
     return path

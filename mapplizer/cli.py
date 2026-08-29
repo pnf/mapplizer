@@ -13,7 +13,7 @@ import sys
 from . import __version__
 from .export import IncompleteExport, build_guide
 from .fetch import FetchError, make_session
-from .kml import write_kml, write_kmz
+from .kml import PROFILE_REGO, PROFILES, write_kml, write_kmz
 from .model import Guide
 from .probe import write_probe
 from .resolve import ResolveError
@@ -71,12 +71,31 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--profile",
+        choices=PROFILES,
+        default=PROFILE_REGO,
+        help=(
+            "output shape. 'rego' (default) writes plain-text notes and "
+            "KMZ-relative <img> photos, the only forms the Rego app reads; "
+            "'earth' writes an HTML card for Google Earth and GIS tools"
+        ),
+    )
+    parser.add_argument(
         "--probe",
         type=pathlib.Path,
         metavar="PATH",
         help=(
             "write a diagnostic KMZ instead of exporting: each pin tests one "
             "KML convention, so importing it shows what the target app reads"
+        ),
+    )
+    parser.add_argument(
+        "--probe-set",
+        choices=("conventions", "photos"),
+        default="conventions",
+        help=(
+            "which probe to write: 'conventions' tests where metadata and "
+            "photos can live; 'photos' drills into the <img> channel"
         ),
     )
     parser.add_argument(
@@ -110,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     session = make_session(args.lang)
 
     if args.probe:
-        write_probe(args.probe, session=session)
+        write_probe(args.probe, session=session, probe_set=args.probe_set)
         if not args.quiet:
             print(f"Wrote import probe to {args.probe}", file=sys.stderr)
         return 0
@@ -122,6 +141,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.photos and args.format != "kmz":
         print("--photos requires --format kmz", file=sys.stderr)
         return 2
+
+    if args.profile == PROFILE_REGO and not (args.format == "kmz" and args.photos):
+        # Rego only accepts photos as KMZ-relative <img> paths, so any other
+        # combination silently produces an import with no pictures.
+        log_target = sys.stderr
+        print(
+            "note: Rego imports photos only from a KMZ with embedded copies; "
+            "use -f kmz --photos to include them.",
+            file=log_target,
+        )
 
     try:
         guide = build_guide(
@@ -149,10 +178,11 @@ def main(argv: list[str] | None = None) -> int:
             output,
             embed_photos=args.photos,
             link_embedded=args.photo_links == "embedded",
+            profile=args.profile,
             session=session,
         )
     else:
-        write_kml(guide, output)
+        write_kml(guide, output, profile=args.profile)
 
     if not args.quiet:
         print(f"Wrote {len(guide.places)} places to {output}", file=sys.stderr)

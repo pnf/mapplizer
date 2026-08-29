@@ -86,9 +86,8 @@ mapplizer URL [-o OUTPUT] [-f {kml,kmz,json}] [--photos] [--lang LANG]
               [--cache DIR] [--chunk-size N] [--allow-partial] [-q] [-v]
 ```
 
-- `-f kmz` zips the output; add `--photos` to download and embed place photos
-  rather than linking them remotely, and `--photo-links remote` if the target
-  app cannot resolve KMZ-relative paths.
+- `--profile rego` (default) or `--profile earth` — see Output below.
+- `-f kmz --photos` embeds photos in the archive. Required for photos in Rego.
 - `--probe PATH` writes a diagnostic KMZ instead of exporting — see below.
 - `-f json` dumps the normalized model — useful for debugging a bad export.
 - `--cache DIR` stores raw place records by muid, so re-runs cost no network.
@@ -97,53 +96,61 @@ mapplizer URL [-o OUTPUT] [-f {kml,kmz,json}] [--photos] [--lang LANG]
 
 ## Output
 
-Importers such as [Rego](https://regoapp.com/) map a placemark onto their own
-place model, so metadata has to land in the fields they look for rather than
-being flattened into a block of description HTML:
+Two audiences want incompatible things from a placemark, so there are two
+profiles, selected with `--profile`.
 
-| Data | KML |
+### `rego` (default)
+
+What the [Rego](https://regoapp.com/) iOS app actually reads. This was
+established by importing a probe file, not from documentation — Rego publishes
+no KML mapping, and most of the obvious guesses turn out to be wrong:
+
+| Convention | Result |
 | --- | --- |
-| name | `<name>` |
-| address | `<address>` — a native KML 2.2 feature element |
-| phone | `<phoneNumber>` — likewise native |
-| notes | `<description>`, as plain text |
-| photos | `<Data name="gx_media_links">` — the Google My Maps convention: URLs (or KMZ-relative paths) separated by spaces |
-| everything else | typed `<Data>` entries in `<ExtendedData>` |
+| `<address>` element | **ignored** |
+| `<Data name="address">` | **ignored** |
+| `<phoneNumber>` element | **ignored** |
+| `gx_media_links` (Google My Maps) | **ignored** |
+| `<img>` with a remote URL | **ignored** — remote images are never fetched |
+| `<img>` with a KMZ-relative path | **the only photo channel** |
+| plain-text `<description>` | shown as notes |
+| HTML `<description>` | shown **raw**, tags and all |
 
-KML 2.2 makes `AbstractFeatureType` a **sequence**, so these elements have a
-required order: name, address, phoneNumber, Snippet, description, styleUrl,
-Region, ExtendedData, then the geometry. Out of order, the file still parses
-but fails schema validation and some importers reject it. Every export is
-validated against the official `ogckml22.xsd` in CI-able tests.
+Rego keeps only coordinates and derives its own address, so everything a reader
+should see has to go in `<description>` as plain text, with photos as `<img>`
+tags pointing inside the archive. Photos therefore require `-f kmz --photos`;
+any other combination imports with no pictures, and the CLI says so.
 
-### Photos
+A photo that fails to download is dropped from the description rather than
+falling back to its URL, since a remote `<img>` would render as a stray tag.
 
-`-f kmz --photos` downloads the photos into the archive and points
-`gx_media_links` at the archive-relative copies. An importer that ignores
-KMZ-relative paths needs `--photo-links remote` instead: the photos are still
-embedded, but the links keep pointing at the original URLs.
+### `earth`
 
-### Finding out what an importer actually reads
+The standards-shaped output: an HTML card in `<description>`, for Google Earth
+and GIS tools.
+
+### Both profiles
+
+Both still emit the native `<address>` and `<phoneNumber>` elements and the
+full typed `<ExtendedData>`. Rego discards them, but they cost nothing, they
+are correct KML, and other tools do read them.
+
+KML 2.2 makes `AbstractFeatureType` a **sequence**, so element order is fixed:
+name, address, phoneNumber, Snippet, description, styleUrl, Region,
+ExtendedData, then geometry. Out of order, the file still parses but fails
+schema validation. Tests validate output against the official `ogckml22.xsd`.
+
+### Finding out what an importer reads
 
 Most apps do not document their KML mapping. `--probe` writes a diagnostic KMZ
 whose pins each exercise one convention in isolation, with the answer in the
-pin's own name:
+pin's own name — import it and the surviving pins name the supported
+conventions.
 
 ```console
-$ mapplizer --probe probe.kmz
+$ mapplizer --probe probe.kmz                      # where metadata can live
+$ mapplizer --probe probe.kmz --probe-set photos   # details of the <img> channel
 ```
-
-```
-01 address element                 06 photo two gx_media_links
-02 ExtendedData address            07 photo description img tag
-03 phoneNumber element             08 photo description img embedded
-04 photo gx_media_links remote     09 description plain text
-05 photo gx_media_links embedded   10 description html
-```
-
-Import it, see which pins came through with an address, a phone number, a
-photo or notes, and the surviving pin names name the conventions that app
-supports.
 
 ## Caveats
 

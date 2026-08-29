@@ -1,7 +1,14 @@
 import xml.etree.ElementTree as ET
 import zipfile
 
-from mapplizer.kml import MEDIA_LINKS_KEY, _cdata, render_kml, write_kmz
+from mapplizer.kml import (
+    MEDIA_LINKS_KEY,
+    PROFILE_EARTH,
+    PROFILE_REGO,
+    _cdata,
+    render_kml,
+    write_kmz,
+)
 from mapplizer.model import Guide, Photo, Place
 
 NS = {"k": "http://www.opengis.net/kml/2.2"}
@@ -74,14 +81,73 @@ def test_phone_uses_the_native_element():
     assert root.find(".//k:Placemark/k:phoneNumber", NS).text == "+15145551234"
 
 
-def test_description_is_notes_not_a_metadata_dump():
-    """Address and phone belong in their own elements, not the notes blob."""
-    root = ET.fromstring(render_kml(_guide()))
+def test_rego_description_is_plain_text_carrying_everything():
+    """Rego discards <address>/<phoneNumber>/ExtendedData, so the plain-text
+    description is the only copy of that data a reader ever sees."""
+    root = ET.fromstring(render_kml(_guide(), profile=PROFILE_REGO))
     description = root.find(".//k:Placemark/k:description", NS).text
-    assert "1448 Sherbrooke" not in description
-    assert "+15145551234" not in description
-    assert "<p>" not in description and "<b>" not in description
+    assert "1448 Sherbrooke, Montreal QC" in description
+    assert "+15145551234" in description
     assert "Persian" in description
+    # Rego shows HTML raw, so there must not be any.
+    assert "<p>" not in description and "<b>" not in description
+
+
+def test_earth_description_is_html():
+    root = ET.fromstring(render_kml(_guide(), profile=PROFILE_EARTH))
+    description = root.find(".//k:Placemark/k:description", NS).text
+    assert "<p>" in description
+    assert "1448 Sherbrooke" in description
+
+
+def test_rego_photos_become_img_tags_in_the_description():
+    """An <img> with a KMZ-relative src is the only photo channel Rego reads."""
+    guide = _guide()
+    guide.places[0].photos = [Photo(url="https://example.test/a.jpg")]
+    root = ET.fromstring(
+        render_kml(guide, {"1": ["files/photos/1-0.jpg"]}, profile=PROFILE_REGO)
+    )
+    description = root.find(".//k:Placemark/k:description", NS).text
+    assert '<img src="files/photos/1-0.jpg"/>' in description
+
+
+def test_multiple_photos_produce_multiple_img_tags():
+    guide = _guide()
+    root = ET.fromstring(render_kml(guide, {"1": ["a.jpg", "b.jpg"]}))
+    description = root.find(".//k:Placemark/k:description", NS).text
+    assert description.count("<img ") == 2
+
+
+def test_rego_drops_photos_that_are_not_embedded():
+    """Rego never fetches remote images, so a URL src would be a dead tag."""
+    root = ET.fromstring(
+        render_kml(
+            _guide(),
+            {"1": ["files/photos/1-0.jpg", "https://example.test/failed.jpg"]},
+            profile=PROFILE_REGO,
+        )
+    )
+    description = root.find(".//k:Placemark/k:description", NS).text
+    assert description.count("<img ") == 1
+    assert "https://example.test/failed.jpg" not in description
+
+
+def test_earth_keeps_remote_photos():
+    root = ET.fromstring(
+        render_kml(
+            _guide(), {"1": ["https://example.test/a.jpg"]}, profile=PROFILE_EARTH
+        )
+    )
+    description = root.find(".//k:Placemark/k:description", NS).text
+    assert "https://example.test/a.jpg" in description
+
+
+def test_notes_survive_alongside_images():
+    """Text and <img> must coexist: Rego strips the tags and keeps the text."""
+    root = ET.fromstring(render_kml(_guide(), {"1": ["a.jpg"]}))
+    description = root.find(".//k:Placemark/k:description", NS).text
+    assert "Persian" in description
+    assert "<img " in description
 
 
 def test_photos_become_media_links():
