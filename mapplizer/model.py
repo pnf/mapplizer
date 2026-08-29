@@ -1,0 +1,96 @@
+"""Normalized data model.
+
+Everything downstream of :mod:`mapplizer.normalize` speaks in these types, so
+Apple's component schema is confined to that one module.
+"""
+
+from __future__ import annotations
+
+import urllib.parse
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class PlaceRef:
+    """A place's identity, as carried in a share URL."""
+
+    muid: str
+    result_provider_id: int
+
+
+@dataclass(frozen=True)
+class GuideRef:
+    """A guide's name and membership, decoded from a share URL."""
+
+    name: str
+    places: tuple[PlaceRef, ...]
+
+
+@dataclass
+class Photo:
+    url: str
+    width: int | None = None
+    height: int | None = None
+    author: str | None = None
+    attribution: str | None = None
+
+
+@dataclass
+class Place:
+    """One resolved place, flattened out of Apple's component array."""
+
+    muid: str
+    result_provider_id: int
+    name: str
+    lat: float
+    lng: float
+
+    place_id: str | None = None
+    category: str | None = None
+    address_lines: list[str] = field(default_factory=list)
+    locality: str | None = None
+    administrative_area: str | None = None
+    postcode: str | None = None
+    country: str | None = None
+    country_code: str | None = None
+    phone: str | None = None
+    url: str | None = None
+    rating: float | None = None
+    rating_count: int | None = None
+    price_level: int | None = None
+    price_symbol: str | None = None
+    timezone: str | None = None
+    hours: list[str] = field(default_factory=list)
+    photos: list[Photo] = field(default_factory=list)
+
+    @property
+    def address(self) -> str:
+        return ", ".join(self.address_lines)
+
+    @property
+    def maps_url(self) -> str:
+        """A canonical Apple Maps link back to this place."""
+        if self.place_id:
+            return (
+                f"https://maps.apple.com/place?place-id={self.place_id}"
+                f"&address={self.lat},{self.lng}"
+            )
+        query = urllib.parse.urlencode(
+            {"ll": f"{self.lat},{self.lng}", "q": self.name}
+        )
+        return f"https://maps.apple.com/?{query}"
+
+    @property
+    def price_display(self) -> str | None:
+        if self.price_level is None:
+            return None
+        return (self.price_symbol or "$") * self.price_level
+
+
+@dataclass
+class Guide:
+    """A fully resolved guide, ready to serialize."""
+
+    name: str
+    places: list[Place] = field(default_factory=list)
+    source_url: str | None = None
