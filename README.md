@@ -87,7 +87,9 @@ mapplizer URL [-o OUTPUT] [-f {kml,kmz,json}] [--photos] [--lang LANG]
 ```
 
 - `-f kmz` zips the output; add `--photos` to download and embed place photos
-  rather than linking them remotely.
+  rather than linking them remotely, and `--photo-links remote` if the target
+  app cannot resolve KMZ-relative paths.
+- `--probe PATH` writes a diagnostic KMZ instead of exporting — see below.
 - `-f json` dumps the normalized model — useful for debugging a bad export.
 - `--cache DIR` stores raw place records by muid, so re-runs cost no network.
 - `--lang` sets `Accept-Language`, which controls the language of the returned
@@ -95,9 +97,53 @@ mapplizer URL [-o OUTPUT] [-f {kml,kmz,json}] [--photos] [--lang LANG]
 
 ## Output
 
-Each place becomes a `<Placemark>` with a `<Point>`. The readable card goes in
-`<description>` as CDATA'd HTML; every structured field is repeated in
-`<ExtendedData>` so nothing is lost round-tripping into other tools.
+Importers such as [Rego](https://regoapp.com/) map a placemark onto their own
+place model, so metadata has to land in the fields they look for rather than
+being flattened into a block of description HTML:
+
+| Data | KML |
+| --- | --- |
+| name | `<name>` |
+| address | `<address>` — a native KML 2.2 feature element |
+| phone | `<phoneNumber>` — likewise native |
+| notes | `<description>`, as plain text |
+| photos | `<Data name="gx_media_links">` — the Google My Maps convention: URLs (or KMZ-relative paths) separated by spaces |
+| everything else | typed `<Data>` entries in `<ExtendedData>` |
+
+KML 2.2 makes `AbstractFeatureType` a **sequence**, so these elements have a
+required order: name, address, phoneNumber, Snippet, description, styleUrl,
+Region, ExtendedData, then the geometry. Out of order, the file still parses
+but fails schema validation and some importers reject it. Every export is
+validated against the official `ogckml22.xsd` in CI-able tests.
+
+### Photos
+
+`-f kmz --photos` downloads the photos into the archive and points
+`gx_media_links` at the archive-relative copies. An importer that ignores
+KMZ-relative paths needs `--photo-links remote` instead: the photos are still
+embedded, but the links keep pointing at the original URLs.
+
+### Finding out what an importer actually reads
+
+Most apps do not document their KML mapping. `--probe` writes a diagnostic KMZ
+whose pins each exercise one convention in isolation, with the answer in the
+pin's own name:
+
+```console
+$ mapplizer --probe probe.kmz
+```
+
+```
+01 address element                 06 photo two gx_media_links
+02 ExtendedData address            07 photo description img tag
+03 phoneNumber element             08 photo description img embedded
+04 photo gx_media_links remote     09 description plain text
+05 photo gx_media_links embedded   10 description html
+```
+
+Import it, see which pins came through with an address, a phone number, a
+photo or notes, and the surviving pin names name the conventions that app
+supports.
 
 ## Caveats
 

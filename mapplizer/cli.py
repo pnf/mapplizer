@@ -15,6 +15,7 @@ from .export import IncompleteExport, build_guide
 from .fetch import FetchError, make_session
 from .kml import write_kml, write_kmz
 from .model import Guide
+from .probe import write_probe
 from .resolve import ResolveError
 
 
@@ -40,7 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="mapplizer",
         description="Export an Apple Maps guide share link to KML/KMZ.",
     )
-    parser.add_argument("url", help="guide share URL, e.g. https://maps.apple/ug/...")
+    parser.add_argument(
+        "url",
+        nargs="?",
+        help="guide share URL, e.g. https://maps.apple/ug/...",
+    )
     parser.add_argument(
         "-o", "--output", type=pathlib.Path, help="output path (default: <guide name>.<ext>)"
     )
@@ -54,7 +59,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--photos",
         action="store_true",
-        help="download and embed photos (KMZ only)",
+        help="download and embed photos into the archive (KMZ only)",
+    )
+    parser.add_argument(
+        "--photo-links",
+        choices=("remote", "embedded"),
+        default="embedded",
+        help=(
+            "with --photos, whether gx_media_links points at the embedded "
+            "copies (default) or the original URLs"
+        ),
+    )
+    parser.add_argument(
+        "--probe",
+        type=pathlib.Path,
+        metavar="PATH",
+        help=(
+            "write a diagnostic KMZ instead of exporting: each pin tests one "
+            "KML convention, so importing it shows what the target app reads"
+        ),
     )
     parser.add_argument(
         "--lang", default="en-US", help="Accept-Language for place data (default: en-US)"
@@ -84,11 +107,22 @@ def main(argv: list[str] | None = None) -> int:
     level = logging.DEBUG if args.verbose else logging.ERROR if args.quiet else logging.INFO
     logging.basicConfig(level=level, format="%(message)s", stream=sys.stderr)
 
+    session = make_session(args.lang)
+
+    if args.probe:
+        write_probe(args.probe, session=session)
+        if not args.quiet:
+            print(f"Wrote import probe to {args.probe}", file=sys.stderr)
+        return 0
+
+    if not args.url:
+        print("error: a guide URL is required (or use --probe)", file=sys.stderr)
+        return 2
+
     if args.photos and args.format != "kmz":
         print("--photos requires --format kmz", file=sys.stderr)
         return 2
 
-    session = make_session(args.lang)
     try:
         guide = build_guide(
             args.url,
@@ -110,7 +144,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.format == "json":
         output.write_text(_as_json(guide), encoding="utf-8")
     elif args.format == "kmz":
-        write_kmz(guide, output, embed_photos=args.photos, session=session)
+        write_kmz(
+            guide,
+            output,
+            embed_photos=args.photos,
+            link_embedded=args.photo_links == "embedded",
+            session=session,
+        )
     else:
         write_kml(guide, output)
 
